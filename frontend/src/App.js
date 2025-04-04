@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import './App.css'; // Ensure the CSS is properly linked
-import ReactMarkdown from 'react-markdown'; // For rendering markdown
-import SyntaxHighlighter from 'react-syntax-highlighter'; // For code block formatting
+import './App.css';
+import ReactMarkdown from 'react-markdown';
+import SyntaxHighlighter from 'react-syntax-highlighter';
 import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 
 function App() {
@@ -12,7 +12,6 @@ function App() {
   const [editingTitle, setEditingTitle] = useState(null);
   const [newTitle, setNewTitle] = useState('');
 
-  // Fetch chats when component mounts
   useEffect(() => {
     const fetchChats = async () => {
       try {
@@ -161,6 +160,14 @@ function App() {
     }
   };
 
+  const handleCopy = (code) => {
+    navigator.clipboard.writeText(code).then(() => {
+      alert('Code copied to clipboard!');
+    }).catch(err => {
+      console.error('Failed to copy: ', err);
+    });
+  };
+
   const renderChats = () => {
     return chats.map((chat) => (
       <div key={chat.chat_id} className="chat-item">
@@ -226,15 +233,34 @@ function App() {
                 components={{
                   code: ({ node, inline, className, children, ...props }) => {
                     const match = /language-(\w+)/.exec(className || '');
+                    const codeString = String(children).replace(/\n$/, '');
                     return !inline && match ? (
-                      <SyntaxHighlighter
-                        style={docco}
-                        language={match[1]}
-                        PreTag="div"
-                        {...props}
-                      >
-                        {String(children).replace(/\n$/, '')}
-                      </SyntaxHighlighter>
+                      <div style={{ position: 'relative' }}>
+                        <SyntaxHighlighter
+                          style={docco}
+                          language={match[1]}
+                          PreTag="div"
+                          {...props}
+                        >
+                          {codeString}
+                        </SyntaxHighlighter>
+                        <button
+                          onClick={() => handleCopy(codeString)}
+                          style={{
+                            position: 'absolute',
+                            top: '10px',
+                            right: '10px',
+                            backgroundColor: '#4f46e5',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            padding: '5px 10px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Copy
+                        </button>
+                      </div>
                     ) : (
                       <code {...props}>{children}</code>
                     );
