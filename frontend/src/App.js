@@ -1,16 +1,47 @@
 import React, { useState, useEffect } from 'react';
-import './App.css'; // Ensure this is the correct path for your CSS file
-import ReactMarkdown from 'react-markdown'; // To render markdown content
-import SyntaxHighlighter from 'react-syntax-highlighter'; // For code block syntax highlighting
+import './App.css'; // Ensure the CSS is properly linked
+import ReactMarkdown from 'react-markdown'; // For rendering markdown
+import SyntaxHighlighter from 'react-syntax-highlighter'; // For code block formatting
 import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState('');
   const [currentChatId, setCurrentChatId] = useState('');
+  const [chats, setChats] = useState([]);
 
+  // Fetch chats when component mounts
+  useEffect(() => {
+    const fetchChats = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:5000/api/chats');
+        const data = await response.json();
+        if (response.ok) {
+          setChats(data);
+          if (data.length > 0) {
+            setCurrentChatId(data[0].chat_id);
+            const chatResponse = await fetch(`http://127.0.0.1:5000/api/chat/${data[0].chat_id}`);
+            const chatData = await chatResponse.json();
+            setMessages(chatData.messages);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching chats:', error);
+      }
+    };
+
+    fetchChats();
+  }, []);
+
+  // Handle new message input
+  const handleInputChange = (e) => {
+    setMessage(e.target.value);
+  };
+
+  // Handle sending a message
   const handleSendMessage = async () => {
-    if (!message.trim()) return; // Don't send empty messages
+    if (!message.trim()) return; // Prevent sending empty messages
+
     setMessages((prevMessages) => [
       ...prevMessages,
       { role: 'user', content: message },
@@ -42,41 +73,70 @@ function App() {
     setMessage(''); // Clear message input after sending
   };
 
-  const handleInputChange = (e) => {
-    setMessage(e.target.value);
-  };
+  // Handle creating a new chat
+  const handleNewChat = async () => {
+    try {
+      const response = await fetch('http://127.0.0.1:5000/api/chat', {
+        method: 'POST',
+      });
 
-  const handleChatSelection = (chatId) => {
-    setCurrentChatId(chatId);
-  };
+      const data = await response.json();
 
-  useEffect(() => {
-    const fetchChats = async () => {
-      try {
-        const response = await fetch('http://127.0.0.1:5000/api/chats');
-        const data = await response.json();
-        if (response.ok) {
-          if (data.length > 0) {
-            setCurrentChatId(data[0].chat_id);
-            const chatResponse = await fetch(`http://127.0.0.1:5000/api/chat/${data[0].chat_id}`);
-            const chatData = await chatResponse.json();
-            setMessages(chatData.messages);
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching chats:', error);
+      if (response.ok) {
+        setCurrentChatId(data.chat_id);
+        setMessages([]); // Reset messages for the new chat
+        setChats((prevChats) => [...prevChats, data]); // Add new chat to the list
+      } else {
+        console.error('Error creating chat:', data.error);
       }
-    };
+    } catch (error) {
+      console.error('Error with fetch:', error);
+    }
+  };
 
-    fetchChats();
-  }, []);
+  // Handle deleting a chat
+  const handleDeleteChat = async (chatId) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}`, {
+        method: 'DELETE',
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setChats((prevChats) => prevChats.filter(chat => chat.chat_id !== chatId)); // Remove deleted chat from the list
+        if (chatId === currentChatId) {
+          setCurrentChatId('');
+          setMessages([]); // Clear current chat's messages
+        }
+      } else {
+        console.error('Error deleting chat:', data.error);
+      }
+    } catch (error) {
+      console.error('Error with fetch:', error);
+    }
+  };
+
+  // Render list of chats
+  const renderChats = () => {
+    return chats.map((chat) => (
+      <div
+        key={chat.chat_id}
+        onClick={() => setCurrentChatId(chat.chat_id)}
+        className={`chat-item ${chat.chat_id === currentChatId ? 'active' : ''}`}
+      >
+        {chat.title}
+        <button className="delete-chat-btn" onClick={() => handleDeleteChat(chat.chat_id)}>Delete</button>
+      </div>
+    ));
+  };
 
   return (
     <div className="App">
       <div className="sidebar">
-        <button className="new-chat-btn" onClick={handleSendMessage}>New Chat</button>
+        <button className="new-chat-btn" onClick={handleNewChat}>New Chat</button>
         <div className="chat-list">
-          {/* Render chat items */}
+          {renderChats()}
         </div>
       </div>
 
@@ -104,9 +164,9 @@ function App() {
                           </code>
                         );
                       },
-                      p({ node, ...props }) {
-                        // Ensure <p> tag does not contain <pre> tags
-                        return <div {...props} />;
+                      p({ node, children, ...props }) {
+                        // Prevent <p> tags from wrapping <pre> tags to avoid hydration errors
+                        return <div {...props}>{children}</div>;
                       },
                     }}
                   />
@@ -123,10 +183,8 @@ function App() {
             value={message}
             onChange={handleInputChange}
             placeholder="Type your message..."
-          ></textarea>
-          <button className="send-btn" onClick={handleSendMessage}>
-            Send
-          </button>
+          />
+          <button onClick={handleSendMessage}>Send</button>
         </div>
       </div>
     </div>

@@ -110,5 +110,18 @@ def send_message(chat_id):
     save_chat(chat)
     return jsonify({"reply": reply})
 
+@app.route("/api/chat/<chat_id>", methods=["DELETE"])
+def delete_chat(chat_id):
+    try:
+        chat_path = get_chat_path(chat_id)
+        if os.path.exists(chat_path):
+            os.remove(chat_path)
+            return jsonify({"message": "Chat deleted successfully"})
+        else:
+            return jsonify({"error": "Chat not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
