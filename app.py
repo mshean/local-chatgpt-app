@@ -3,6 +3,7 @@ from flask_cors import CORS
 import openai
 import os
 import json
+import logging
 from uuid import uuid4
 from dotenv import load_dotenv
 
@@ -11,6 +12,9 @@ load_dotenv()
 
 # Set up OpenAI API key
 client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -32,6 +36,25 @@ def load_chat(chat_id):
 def save_chat(chat):
     with open(get_chat_path(chat["chat_id"]), 'w') as f:
         json.dump(chat, f, indent=2)
+
+def get_recent_messages(messages, max_tokens=4000):
+    """
+    Approximates a limited token window of recent messages.
+    Assumes ~4 characters per token.
+    Returns trimmed messages and estimated token count.
+    """
+    token_limit = max_tokens
+    estimated_token_count = 0
+    recent_messages = []
+
+    for msg in reversed(messages):
+        msg_tokens = len(msg.get("content", "")) // 4
+        if estimated_token_count + msg_tokens > token_limit:
+            break
+        recent_messages.insert(0, msg)
+        estimated_token_count += msg_tokens
+
+    return recent_messages, estimated_token_count
 
 @app.route("/api/chats", methods=["GET"])
 def list_chats():
@@ -73,32 +96,36 @@ def new_chat():
 def send_message(chat_id):
     data = request.get_json()
 
-    # Check if the message is provided
     if not data or 'message' not in data:
         return jsonify({"error": "Message is required"}), 400
 
     user_msg = data.get("message")
     chat = load_chat(chat_id)
 
-    # Check if chat exists
     if not chat:
         return jsonify({"error": "Chat not found"}), 404
 
     chat["messages"].append({"role": "user", "content": user_msg})
 
     try:
-        # Prepare messages in the format expected by the Chat API
-        messages = [{"role": msg["role"], "content": msg["content"]} for msg in chat["messages"]]
-        
-        # Call OpenAI API
+        system_prompt = {"role": "system", "content": "You are a helpful assistant."}
+
+        # Estimate and trim messages to fit token window
+        trimmed_messages, estimated_tokens = get_recent_messages(
+            [{"role": msg["role"], "content": msg["content"]} for msg in chat["messages"]],
+            max_tokens=4000
+        )
+
+        messages = [system_prompt] + trimmed_messages
+        logging.info(f"Sending estimated {estimated_tokens} tokens to OpenAI for chat_id={chat_id}")
+
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
             temperature=0.2,
             max_tokens=4000
         )
-        
-        # Extract the assistant's reply from the response
+
         reply = response.choices[0].message.content
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -135,12 +162,10 @@ def rename_chat(chat_id):
     if not chat:
         return jsonify({"error": "Chat not found"}), 404
 
-    # Update the title of the chat
     chat["title"] = new_title
     save_chat(chat)
 
     return jsonify({"chat_id": chat_id, "new_title": new_title})
-
 
 
 if __name__ == '__main__':
