@@ -21,7 +21,6 @@ function App() {
         if (response.ok) {
           setChats(data);
           if (data.length > 0) {
-            // Set the first chat as the current chat initially
             setCurrentChatId(data[0].chat_id);
             loadChatMessages(data[0].chat_id);
           }
@@ -34,7 +33,6 @@ function App() {
     fetchChats();
   }, []);
 
-  // Load chat messages for a specific chat
   const loadChatMessages = async (chatId) => {
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}`);
@@ -49,14 +47,12 @@ function App() {
     }
   };
 
-  // Handle new message input
   const handleInputChange = (e) => {
     setMessage(e.target.value);
   };
 
-  // Handle sending a message
   const handleSendMessage = async () => {
-    if (!message.trim()) return; // Prevent sending empty messages
+    if (!message.trim()) return;
 
     setMessages((prevMessages) => [
       ...prevMessages,
@@ -66,9 +62,7 @@ function App() {
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${currentChatId}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
       });
 
@@ -86,10 +80,9 @@ function App() {
       console.error('Error with fetch:', error);
     }
 
-    setMessage(''); // Clear message input after sending
+    setMessage('');
   };
 
-  // Handle creating a new chat
   const handleNewChat = async () => {
     try {
       const response = await fetch('http://127.0.0.1:5000/api/chat', {
@@ -100,8 +93,8 @@ function App() {
 
       if (response.ok) {
         setCurrentChatId(data.chat_id);
-        setMessages([]); // Reset messages for the new chat
-        setChats((prevChats) => [...prevChats, data]); // Add new chat to the list
+        setMessages([]);
+        setChats((prevChats) => [...prevChats, data]);
       } else {
         console.error('Error creating chat:', data.error);
       }
@@ -110,13 +103,11 @@ function App() {
     }
   };
 
-  // Handle reopening a chat
   const handleReopenChat = async (chatId) => {
-    setCurrentChatId(chatId);  // Set the current chat to the selected chat
-    loadChatMessages(chatId);  // Load messages for the selected chat
+    setCurrentChatId(chatId);
+    loadChatMessages(chatId);
   };
 
-  // Handle deleting a chat
   const handleDeleteChat = async (chatId) => {
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}`, {
@@ -126,10 +117,10 @@ function App() {
       const data = await response.json();
 
       if (response.ok) {
-        setChats((prevChats) => prevChats.filter(chat => chat.chat_id !== chatId)); // Remove deleted chat from the list
+        setChats((prevChats) => prevChats.filter(chat => chat.chat_id !== chatId));
         if (chatId === currentChatId) {
           setCurrentChatId('');
-          setMessages([]); // Clear current chat's messages
+          setMessages([]);
         }
       } else {
         console.error('Error deleting chat:', data.error);
@@ -139,21 +130,17 @@ function App() {
     }
   };
 
-  // Handle renaming a chat
   const handleRenameChat = (chatId) => {
     setEditingTitle(chatId);
     const chat = chats.find(c => c.chat_id === chatId);
     setNewTitle(chat.title);
   };
 
-  // Save the new title of the chat
   const handleSaveTitle = async (chatId) => {
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}/rename`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle }),
       });
 
@@ -165,7 +152,7 @@ function App() {
             chat.chat_id === chatId ? { ...chat, title: newTitle } : chat
           )
         );
-        setEditingTitle(null); // Exit editing mode
+        setEditingTitle(null);
       } else {
         console.error('Error updating title:', data.error);
       }
@@ -174,7 +161,6 @@ function App() {
     }
   };
 
-  // Render list of chats
   const renderChats = () => {
     return chats.map((chat) => (
       <div key={chat.chat_id} className="chat-item">

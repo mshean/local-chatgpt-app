@@ -116,11 +116,11 @@ body {
 }
 
 .message {
-  margin-bottom: 12px;
+  margin-bottom: 12px; /* Space between messages */
   padding: 12px;
   border-radius: 8px;
   word-wrap: break-word;
-  display: inline-block;
+  display: block; /* Ensure each message is on a new line */
   max-width: 80%;
 }
 
@@ -223,26 +223,3 @@ button {
 button:hover {
   background-color: #4338ca;
 }
-
-/* Assistant response container */
-.assistant-response {
-  margin-bottom: 16px;
-}
-
-.user-message-content {
-  padding: 12px;
-  background-color: #4f46e5;
-  color: white;
-  border-radius: 20px;
-  max-width: 80%;
-}
-
-/* General message container styles */
-.assistant-message-content {
-  padding: 12px;
-  background-color: #f3f4f6;
-  color: #1f2937;
-  border-radius: 20px;
-  max-width: 80%;
-}
-
