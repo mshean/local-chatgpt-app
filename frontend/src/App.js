@@ -1,16 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
 import ReactMarkdown from 'react-markdown';
 import SyntaxHighlighter from 'react-syntax-highlighter';
 import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
+import { debounce } from 'lodash';
 
 function App() {
   const [messages, setMessages] = useState([]);
-  const [message, setMessage] = useState('');
   const [currentChatId, setCurrentChatId] = useState('');
   const [chats, setChats] = useState([]);
   const [editingTitle, setEditingTitle] = useState(null);
   const [newTitle, setNewTitle] = useState('');
+  const inputRef = useRef();
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -46,11 +47,16 @@ function App() {
     }
   };
 
-  const handleInputChange = (e) => {
-    setMessage(e.target.value);
-  };
+  // Removed setMessage from handleInputChange
+  const handleInputChange = useCallback(
+    debounce((value) => {
+      // You can perform any logic here if needed
+    }, 300), // Adjust the debounce delay as needed
+    []
+  );
 
   const handleSendMessage = async () => {
+    const message = inputRef.current.value;
     if (!message.trim()) return;
 
     setMessages((prevMessages) => [
@@ -79,7 +85,7 @@ function App() {
       console.error('Error with fetch:', error);
     }
 
-    setMessage('');
+    inputRef.current.value = ''; // Clear the input
   };
 
   const handleNewChat = async () => {
@@ -211,6 +217,59 @@ function App() {
     ));
   };
 
+  const MessageList = React.memo(({ messages }) => {
+    return (
+      <div className="message-container">
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            className={`message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`}
+          >
+            <ReactMarkdown
+              children={msg.content}
+              components={{
+                code: ({ node, inline, className, children, ...props }) => {
+                  const match = /language-(\w+)/.exec(className || '');
+                  const codeString = String(children).replace(/\n$/, '');
+                  return !inline && match ? (
+                    <div style={{ position: 'relative' }}>
+                      <SyntaxHighlighter
+                        style={docco}
+                        language={match[1]}
+                        PreTag="div"
+                        {...props}
+                      >
+                        {codeString}
+                      </SyntaxHighlighter>
+                      <button
+                        onClick={() => handleCopy(codeString)}
+                        style={{
+                          position: 'absolute',
+                          top: '10px',
+                          right: '10px',
+                          backgroundColor: '#4f46e5',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          padding: '5px 10px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  ) : (
+                    <code {...props}>{children}</code>
+                  );
+                },
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    );
+  });
+
   return (
     <div className="App">
       <div className="sidebar">
@@ -222,58 +281,11 @@ function App() {
         </div>
       </div>
       <div className="chat-area">
-        <div className="message-container">
-          {messages.map((msg, index) => (
-            <div
-              key={index}
-              className={`message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`}
-            >
-              <ReactMarkdown
-                children={msg.content}
-                components={{
-                  code: ({ node, inline, className, children, ...props }) => {
-                    const match = /language-(\w+)/.exec(className || '');
-                    const codeString = String(children).replace(/\n$/, '');
-                    return !inline && match ? (
-                      <div style={{ position: 'relative' }}>
-                        <SyntaxHighlighter
-                          style={docco}
-                          language={match[1]}
-                          PreTag="div"
-                          {...props}
-                        >
-                          {codeString}
-                        </SyntaxHighlighter>
-                        <button
-                          onClick={() => handleCopy(codeString)}
-                          style={{
-                            position: 'absolute',
-                            top: '10px',
-                            right: '10px',
-                            backgroundColor: '#4f46e5',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '4px',
-                            padding: '5px 10px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Copy
-                        </button>
-                      </div>
-                    ) : (
-                      <code {...props}>{children}</code>
-                    );
-                  },
-                }}
-              />
-            </div>
-          ))}
-        </div>
+        <MessageList messages={messages} />
         <div className="message-input-container">
           <textarea
-            value={message}
-            onChange={handleInputChange}
+            ref={inputRef}
+            onChange={(e) => handleInputChange(e.target.value)}
             placeholder="Type your message..."
           />
           <button onClick={handleSendMessage}>Send</button>
