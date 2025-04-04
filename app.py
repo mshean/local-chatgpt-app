@@ -122,6 +122,26 @@ def delete_chat(chat_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/chat/<chat_id>/rename", methods=["PATCH"])
+def rename_chat(chat_id):
+    data = request.get_json()
+    new_title = data.get("title")
+
+    if not new_title:
+        return jsonify({"error": "Title is required"}), 400
+
+    chat = load_chat(chat_id)
+
+    if not chat:
+        return jsonify({"error": "Chat not found"}), 404
+
+    # Update the title of the chat
+    chat["title"] = new_title
+    save_chat(chat)
+
+    return jsonify({"chat_id": chat_id, "new_title": new_title})
+
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

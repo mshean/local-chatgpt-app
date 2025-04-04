@@ -41,6 +41,64 @@ body {
   overflow-y: auto;
 }
 
+/* Chat item styles */
+.chat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 8px;
+  border-radius: 8px;
+  background-color: #f3f4f6;
+}
+
+.chat-title-container {
+  display: flex;
+  align-items: center;
+  flex-grow: 1;
+  justify-content: space-between;
+}
+
+.chat-title {
+  font-weight: bold;
+  cursor: pointer;
+  margin-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-grow: 1;
+}
+
+.rename-chat-button,
+.delete-chat-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #4f46e5;
+  font-size: 18px;
+  margin-left: 8px;
+}
+
+.rename-chat-button:hover,
+.delete-chat-button:hover {
+  color: #4338ca;
+}
+
+.chat-title-input {
+  padding: 6px;
+  font-size: 1rem;
+  margin-right: 8px;
+  border-radius: 4px;
+}
+
+.save-title-button {
+  background-color: #4f46e5;
+  color: white;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
 /* Chat area */
 .chat-area {
   flex-grow: 1;
@@ -187,3 +245,4 @@ button:hover {
   border-radius: 20px;
   max-width: 80%;
 }
+

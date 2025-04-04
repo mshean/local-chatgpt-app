@@ -9,6 +9,8 @@ function App() {
   const [message, setMessage] = useState('');
   const [currentChatId, setCurrentChatId] = useState('');
   const [chats, setChats] = useState([]);
+  const [editingTitle, setEditingTitle] = useState(null);
+  const [newTitle, setNewTitle] = useState('');
 
   // Fetch chats when component mounts
   useEffect(() => {
@@ -19,10 +21,9 @@ function App() {
         if (response.ok) {
           setChats(data);
           if (data.length > 0) {
+            // Set the first chat as the current chat initially
             setCurrentChatId(data[0].chat_id);
-            const chatResponse = await fetch(`http://127.0.0.1:5000/api/chat/${data[0].chat_id}`);
-            const chatData = await chatResponse.json();
-            setMessages(chatData.messages);
+            loadChatMessages(data[0].chat_id);
           }
         }
       } catch (error) {
@@ -32,6 +33,21 @@ function App() {
 
     fetchChats();
   }, []);
+
+  // Load chat messages for a specific chat
+  const loadChatMessages = async (chatId) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}`);
+      const data = await response.json();
+      if (response.ok) {
+        setMessages(data.messages);
+      } else {
+        console.error('Error loading chat messages:', data.error);
+      }
+    } catch (error) {
+      console.error('Error with fetch:', error);
+    }
+  };
 
   // Handle new message input
   const handleInputChange = (e) => {
@@ -94,6 +110,12 @@ function App() {
     }
   };
 
+  // Handle reopening a chat
+  const handleReopenChat = async (chatId) => {
+    setCurrentChatId(chatId);  // Set the current chat to the selected chat
+    loadChatMessages(chatId);  // Load messages for the selected chat
+  };
+
   // Handle deleting a chat
   const handleDeleteChat = async (chatId) => {
     try {
@@ -117,16 +139,81 @@ function App() {
     }
   };
 
+  // Handle renaming a chat
+  const handleRenameChat = (chatId) => {
+    setEditingTitle(chatId);
+    const chat = chats.find(c => c.chat_id === chatId);
+    setNewTitle(chat.title);
+  };
+
+  // Save the new title of the chat
+  const handleSaveTitle = async (chatId) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}/rename`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title: newTitle }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setChats((prevChats) =>
+          prevChats.map((chat) =>
+            chat.chat_id === chatId ? { ...chat, title: newTitle } : chat
+          )
+        );
+        setEditingTitle(null); // Exit editing mode
+      } else {
+        console.error('Error updating title:', data.error);
+      }
+    } catch (error) {
+      console.error('Error with fetch:', error);
+    }
+  };
+
   // Render list of chats
   const renderChats = () => {
     return chats.map((chat) => (
-      <div
-        key={chat.chat_id}
-        onClick={() => setCurrentChatId(chat.chat_id)}
-        className={`chat-item ${chat.chat_id === currentChatId ? 'active' : ''}`}
-      >
-        {chat.title}
-        <button className="delete-chat-btn" onClick={() => handleDeleteChat(chat.chat_id)}>Delete</button>
+      <div key={chat.chat_id} className="chat-item">
+        <div className="chat-title-container">
+          {editingTitle === chat.chat_id ? (
+            <>
+              <input
+                type="text"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                className="chat-title-input"
+              />
+              <button onClick={() => handleSaveTitle(chat.chat_id)} className="save-title-button">
+                Save
+              </button>
+            </>
+          ) : (
+            <>
+              <span
+                className="chat-title"
+                onClick={() => handleReopenChat(chat.chat_id)}
+              >
+                {chat.title}
+              </span>
+              <button
+                onClick={() => handleRenameChat(chat.chat_id)}
+                className="rename-chat-button"
+              >
+                ✎
+              </button>
+            </>
+          )}
+        </div>
+        <button
+          onClick={() => handleDeleteChat(chat.chat_id)}
+          className="delete-chat-button"
+        >
+          ❌
+        </button>
       </div>
     ));
   };
@@ -134,12 +221,13 @@ function App() {
   return (
     <div className="App">
       <div className="sidebar">
-        <button className="new-chat-btn" onClick={handleNewChat}>New Chat</button>
+        <button onClick={handleNewChat} className="new-chat-btn">
+          New Chat
+        </button>
         <div className="chat-list">
           {renderChats()}
         </div>
       </div>
-
       <div className="chat-area">
         <div className="message-container">
           {messages.map((msg, index) => (
@@ -147,37 +235,29 @@ function App() {
               key={index}
               className={`message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`}
             >
-              {msg.role === 'assistant' ? (
-                <div className="assistant-response">
-                  <ReactMarkdown
-                    children={msg.content}
-                    components={{
-                      code({ inline, className, children, ...props }) {
-                        const language = className?.replace('language-', '');
-                        return !inline ? (
-                          <SyntaxHighlighter style={docco} language={language} {...props}>
-                            {String(children).replace(/\n$/, '')}
-                          </SyntaxHighlighter>
-                        ) : (
-                          <code className={className} {...props}>
-                            {children}
-                          </code>
-                        );
-                      },
-                      p({ node, children, ...props }) {
-                        // Prevent <p> tags from wrapping <pre> tags to avoid hydration errors
-                        return <div {...props}>{children}</div>;
-                      },
-                    }}
-                  />
-                </div>
-              ) : (
-                <div className="user-message-content">{msg.content}</div>
-              )}
+              <ReactMarkdown
+                children={msg.content}
+                components={{
+                  code: ({ node, inline, className, children, ...props }) => {
+                    const match = /language-(\w+)/.exec(className || '');
+                    return !inline && match ? (
+                      <SyntaxHighlighter
+                        style={docco}
+                        language={match[1]}
+                        PreTag="div"
+                        {...props}
+                      >
+                        {String(children).replace(/\n$/, '')}
+                      </SyntaxHighlighter>
+                    ) : (
+                      <code {...props}>{children}</code>
+                    );
+                  },
+                }}
+              />
             </div>
           ))}
         </div>
-
         <div className="message-input-container">
           <textarea
             value={message}
