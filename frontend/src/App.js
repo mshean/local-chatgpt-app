@@ -16,21 +16,9 @@ function App() {
   const [pastedCode, setPastedCode] = useState('');
   const inputRef = useRef();
   const messageInputRef = useRef('');
-  const virtuosoRef = useRef(); // Reference to the Virtuoso component
+  const virtuosoRef = useRef();
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    if (messages.length > 0 && virtuosoRef.current) {
-      // Small delay to ensure the message is rendered before scrolling
-      setTimeout(() => {
-        virtuosoRef.current.scrollToIndex({
-          index: messages.length - 1,
-          align: 'end',
-          behavior: 'smooth'
-        });
-      }, 100);
-    }
-  }, [messages]);
+  // Remove manual scrolling - let Virtuoso handle it automatically
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -57,16 +45,7 @@ function App() {
       const data = await response.json();
       if (response.ok) {
         setMessages(data.messages);
-        // Scroll to bottom after loading messages
-        setTimeout(() => {
-          if (virtuosoRef.current && data.messages.length > 0) {
-            virtuosoRef.current.scrollToIndex({
-              index: data.messages.length - 1,
-              align: 'end',
-              behavior: 'auto'
-            });
-          }
-        }, 100);
+        // Remove the setTimeout scrolling from here - let the useEffect handle it
       } else {
         console.error('Error loading chat messages:', data.error);
       }
@@ -293,8 +272,8 @@ function App() {
     }
 
     return (
-      <div style={{ height: '100%', width: '100%', padding: '24px 32px 0 32px' }}>
-        <div style={{ maxWidth: '700px', margin: '0 auto', height: '100%' }}>
+      <div style={{ height: '100%', width: '100%', padding: '24px 24px 0 24px' }}>
+        <div style={{ maxWidth: 'none', margin: '0 auto', height: '100%' }}>
           <Virtuoso
             ref={virtuosoRef}
             style={{ height: '100%', width: '100%' }}
@@ -345,6 +324,7 @@ function App() {
               );
             }}
             followOutput="smooth"
+            initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : 0}
           />
         </div>
       </div>
@@ -416,8 +396,8 @@ function App() {
       <div className="main-content">
         <MessageList messages={messages} />
         {isLoading && (
-          <div style={{ padding: '0 32px' }}>
-            <div style={{ maxWidth: '700px', margin: '0 auto' }}>
+          <div style={{ padding: '0 24px' }}>
+            <div style={{ maxWidth: 'none', margin: '0 auto' }}>
               <LoadingIndicator />
             </div>
           </div>
@@ -595,7 +575,7 @@ function App() {
           font-size: 16px;
           line-height: 1.7;
           word-break: break-word;
-          max-width: 100%;
+          max-width: calc(100% - 60px);
           box-shadow: 0 2px 8px rgba(0,0,0,0.07);
         }
         .message-block.user .msg-bubble {
@@ -640,10 +620,10 @@ function App() {
         }
         .copy-button:hover { background: #393950; }
         .input-container {
-          padding: 0 32px 24px 32px;
+          padding: 0 24px 24px 24px;
           background: linear-gradient(0deg, #212121 80%, rgba(33,33,33,0.7) 100%);
           width: 100%;
-          max-width: 700px;
+          max-width: none;
           margin: 0 auto;
         }
         .input-form {
