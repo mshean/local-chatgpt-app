@@ -335,15 +335,33 @@ function App() {
     <div className="app">
       <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
-          <button onClick={handleNewChat} className="new-chat-btn">
-            ➕ New chat
-          </button>
-          <button 
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="collapse-btn"
-          >
-            {sidebarCollapsed ? '→' : '←'}
-          </button>
+          {!sidebarCollapsed ? (
+            <>
+              <button onClick={handleNewChat} className="new-chat-btn">
+                ➕ New chat
+              </button>
+              <button 
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                className="collapse-btn"
+                title="Collapse sidebar"
+              >
+                ←
+              </button>
+            </>
+          ) : (
+            <div className="collapsed-header">
+              <button onClick={handleNewChat} className="new-chat-btn-collapsed" title="New chat">
+                ➕
+              </button>
+              <button 
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                className="expand-btn"
+                title="Expand sidebar"
+              >
+                →
+              </button>
+            </div>
+          )}
         </div>
         {!sidebarCollapsed && (
           <div className="chat-list">
@@ -455,12 +473,17 @@ function App() {
           overflow-y: auto;
           transition: width 0.2s ease;
         }
-        .sidebar.collapsed { width: 50px; }
+        .sidebar.collapsed { width: 60px; }
         .sidebar-header {
           padding: 16px;
           display: flex;
           gap: 8px;
           border-bottom: 1px solid #2f2f2f;
+        }
+        .collapsed-header {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
         }
         .new-chat-btn {
           flex: 1;
@@ -474,14 +497,51 @@ function App() {
           transition: all 0.2s;
         }
         .new-chat-btn:hover { background: #3a3a3a; }
-        .collapse-btn {
-          background: transparent;
+        .new-chat-btn-collapsed {
+          background: #2f2f2f;
+          color: #ececec;
+          border: 1px solid #4a4a4a;
+          border-radius: 8px;
+          padding: 12px;
+          cursor: pointer;
+          font-size: 16px;
+          transition: all 0.2s;
+          width: 100%;
+          height: 44px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .new-chat-btn-collapsed:hover { background: #3a3a3a; }
+        .collapse-btn, .expand-btn {
+          background: #2f2f2f;
           border: 1px solid #4a4a4a;
           color: #ececec;
           border-radius: 8px;
           padding: 12px;
           cursor: pointer;
           width: 44px;
+          height: 44px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+          font-size: 14px;
+        }
+        .collapse-btn:hover, .expand-btn:hover { 
+          background: #3a3a3a; 
+          border-color: #5a5a5a;
+        }
+        .expand-btn {
+          background: #0a84ff;
+          border-color: #0a84ff;
+          color: #fff;
+          font-size: 16px;
+          font-weight: bold;
+        }
+        .expand-btn:hover {
+          background: #0066cc;
+          border-color: #0066cc;
         }
         .chat-list {
           flex: 1;
