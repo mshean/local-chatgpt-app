@@ -272,7 +272,7 @@ function App() {
     }
 
     return (
-      <div style={{ height: '100%', width: '100%', padding: '24px 24px 0 24px' }}>
+      <div style={{ height: '100%', width: '100%', padding: '24px 24px 24px 24px' }}>
         <div style={{ maxWidth: 'none', margin: '0 auto', height: '100%' }}>
           <Virtuoso
             ref={virtuosoRef}
@@ -394,14 +394,16 @@ function App() {
         )}
       </div>
       <div className="main-content">
-        <MessageList messages={messages} />
-        {isLoading && (
-          <div style={{ padding: '0 24px' }}>
-            <div style={{ maxWidth: 'none', margin: '0 auto' }}>
-              <LoadingIndicator />
+        <div className="messages-area">
+          <MessageList messages={messages} />
+          {isLoading && (
+            <div style={{ padding: '0 24px' }}>
+              <div style={{ maxWidth: 'none', margin: '0 auto' }}>
+                <LoadingIndicator />
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
         <div className="input-container">
           <div className="input-form">
             <div className="input-wrapper">
@@ -542,6 +544,11 @@ function App() {
           overflow: hidden;
           min-width: 0;
         }
+        .messages-area {
+          flex: 1;
+          overflow: hidden;
+          margin-bottom: 16px;
+        }
         .message-block {
           display: flex;
           align-items: flex-start;
@@ -625,6 +632,7 @@ function App() {
           width: 100%;
           max-width: none;
           margin: 0 auto;
+          flex-shrink: 0;
         }
         .input-form {
           display: flex;
