@@ -4,8 +4,17 @@ import openai
 import os
 import json
 import logging
+import time
 from uuid import uuid4
 from dotenv import load_dotenv
+
+# Configuration constants
+MAX_MODEL_TOKENS = 30000  # Conservative limit for GPT-4o (actual is ~32k)
+MAX_RESPONSE_TOKENS = 8000  # Reserve for response (increased for code-heavy conversations)
+MAX_CONTEXT_TOKENS = MAX_MODEL_TOKENS - MAX_RESPONSE_TOKENS  # 22k for context
+RECENT_MESSAGES_COUNT = 8  # Keep last 8 messages in full
+SUMMARY_MAX_TOKENS = 800  # Keep summaries concise
+MIN_MESSAGES_TO_SUMMARIZE = 4  # Don't summarize very short conversations
 
 # Load environment variables
 load_dotenv()
@@ -31,30 +40,189 @@ def load_chat(chat_id):
         with open(get_chat_path(chat_id), 'r') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"chat_id": chat_id, "title": "New Chat", "messages": []}
+        return {"chat_id": chat_id, "title": "New Chat", "messages": [], "summary": None}
 
 def save_chat(chat):
     with open(get_chat_path(chat["chat_id"]), 'w') as f:
         json.dump(chat, f, indent=2)
 
-def get_recent_messages(messages, max_tokens=4000):
+def estimate_tokens(text):
     """
-    Approximates a limited token window of recent messages.
-    Assumes ~4 characters per token.
-    Returns trimmed messages and estimated token count.
+    Better token estimation using multiple heuristics.
+    GPT-4 averages about 3.2-3.8 characters per token for English text.
     """
-    token_limit = max_tokens
-    estimated_token_count = 0
-    recent_messages = []
+    if not text:
+        return 0
+    
+    # Use a more accurate estimate
+    char_count = len(text)
+    word_count = len(text.split())
+    
+    # Estimate based on characters (more conservative)
+    char_estimate = char_count / 3.5
+    
+    # Estimate based on words (GPT models average ~1.3 tokens per word)
+    word_estimate = word_count * 1.3
+    
+    # Use the higher estimate to be conservative
+    return int(max(char_estimate, word_estimate))
 
-    for msg in reversed(messages):
-        msg_tokens = len(msg.get("content", "")) // 4
-        if estimated_token_count + msg_tokens > token_limit:
-            break
-        recent_messages.insert(0, msg)
-        estimated_token_count += msg_tokens
+def count_message_tokens(messages):
+    """Count tokens for a list of messages, including role overhead."""
+    total = 0
+    for msg in messages:
+        # Add tokens for content
+        total += estimate_tokens(msg.get("content", ""))
+        # Add overhead for role and formatting (~10 tokens per message)
+        total += 10
+    return total
 
-    return recent_messages, estimated_token_count
+def build_context_messages(system_prompt, summary, recent_messages):
+    """Build the context messages for the API call."""
+    context = [system_prompt]
+    
+    if summary:
+        summary_msg = {
+            "role": "system", 
+            "content": f"Previous conversation summary: {summary}"
+        }
+        context.append(summary_msg)
+    
+    context.extend(recent_messages)
+    return context
+
+def summarize_conversation(messages, max_tokens=SUMMARY_MAX_TOKENS):
+    """
+    Create a concise summary of the conversation.
+    """
+    if len(messages) < MIN_MESSAGES_TO_SUMMARIZE:
+        return None
+    
+    # Prepare conversation text
+    conversation_text = ""
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        conversation_text += f"{role}: {content}\n"
+    
+    # Create summary prompt
+    prompt = f"""Please create a concise summary of this conversation that captures:
+1. The main topics discussed
+2. Key questions asked and answers provided
+3. Important context that would be needed for continuing the conversation
+4. Any ongoing tasks or problems being worked on
+
+Keep the summary under {max_tokens//4} words. Here's the conversation:
+
+{conversation_text}"""
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Use cheaper model for summarization
+            messages=[
+                {"role": "system", "content": "You are an expert at creating concise, informative conversation summaries."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=max_tokens,
+            temperature=0.2,
+        )
+        
+        summary = response.choices[0].message.content.strip()
+        logging.info(f"Created summary of {estimate_tokens(summary)} tokens from {len(messages)} messages")
+        return summary
+        
+    except Exception as e:
+        logging.error(f"Error creating summary: {e}")
+        return None
+
+def detect_conversation_type(messages):
+    """
+    Detect if this is a code-heavy conversation to adjust response limits.
+    """
+    if not messages:
+        return "general"
+    
+    # Check recent messages for code indicators
+    recent_text = " ".join([msg.get("content", "")[-500:] for msg in messages[-3:]])
+    code_indicators = ["```", "def ", "class ", "import ", "function", "const ", "let ", "var ", 
+                      "public class", "#!/", "<script", "SELECT", "FROM", "WHERE"]
+    
+    code_score = sum(1 for indicator in code_indicators if indicator in recent_text)
+    
+    return "code" if code_score >= 2 else "general"
+
+def get_response_token_limit(conversation_type):
+    """Get appropriate response token limit based on conversation type."""
+    if conversation_type == "code":
+        return 8000  # More tokens for code responses
+    else:
+        return 3000  # Standard for general conversation
+
+def manage_context(chat, system_prompt):
+    """
+    Manage conversation context to stay within token limits.
+    Returns the context messages to send to the API and response token limit.
+    """
+    messages = chat.get("messages", [])
+    current_summary = chat.get("summary")
+    
+    # Detect conversation type and set appropriate limits
+    conversation_type = detect_conversation_type(messages)
+    response_tokens = get_response_token_limit(conversation_type)
+    max_context_tokens = MAX_MODEL_TOKENS - response_tokens
+    
+    if len(messages) <= RECENT_MESSAGES_COUNT:
+        # Short conversation, no need for summarization
+        context = build_context_messages(system_prompt, current_summary, messages)
+        token_count = count_message_tokens(context)
+        
+        if token_count <= max_context_tokens:
+            return context, token_count, response_tokens
+    
+    # Get recent messages
+    recent_messages = messages[-RECENT_MESSAGES_COUNT:]
+    older_messages = messages[:-RECENT_MESSAGES_COUNT]
+    
+    # Build initial context
+    context = build_context_messages(system_prompt, current_summary, recent_messages)
+    token_count = count_message_tokens(context)
+    
+    # If context is too large, we need to manage it
+    if token_count > max_context_tokens:
+        logging.info(f"Context too large ({token_count} tokens), managing... (type: {conversation_type})")
+        
+        # First, try to create/update summary if we have older messages
+        if older_messages and len(older_messages) >= MIN_MESSAGES_TO_SUMMARIZE:
+            # If we already have a summary, combine it with some older messages
+            messages_to_summarize = older_messages
+            if current_summary:
+                # Include the summary context in the messages to summarize
+                summary_msg = {"role": "system", "content": f"Previous context: {current_summary}"}
+                messages_to_summarize = [summary_msg] + older_messages
+            
+            new_summary = summarize_conversation(messages_to_summarize)
+            if new_summary:
+                chat["summary"] = new_summary
+                context = build_context_messages(system_prompt, new_summary, recent_messages)
+                token_count = count_message_tokens(context)
+                logging.info(f"Updated summary, new context size: {token_count} tokens")
+        
+        # If still too large, trim recent messages
+        while token_count > max_context_tokens and len(recent_messages) > 1:
+            recent_messages.pop(0)  # Remove oldest of the recent messages
+            context = build_context_messages(system_prompt, chat.get("summary"), recent_messages)
+            token_count = count_message_tokens(context)
+            logging.info(f"Trimmed recent messages, new context size: {token_count} tokens")
+        
+        # Last resort: if still too large, clear everything except the most recent message
+        if token_count > max_context_tokens:
+            logging.warning("Extreme context size, keeping only the last message")
+            last_message = messages[-1] if messages else []
+            context = build_context_messages(system_prompt, None, [last_message] if last_message else [])
+            token_count = count_message_tokens(context)
+            chat["summary"] = None  # Clear summary as we're starting fresh
+    
+    return context, token_count, response_tokens
 
 @app.route("/api/chats", methods=["GET"])
 def list_chats():
@@ -86,7 +254,7 @@ def get_chat(chat_id):
 def new_chat():
     try:
         chat_id = str(uuid4())
-        chat = {"chat_id": chat_id, "title": "New Chat", "messages": []}
+        chat = {"chat_id": chat_id, "title": "New Chat", "messages": [], "summary": None}
         save_chat(chat)
         return jsonify(chat)
     except Exception as e:
@@ -105,37 +273,46 @@ def send_message(chat_id):
     if not chat:
         return jsonify({"error": "Chat not found"}), 404
 
+    # Add user message
     chat["messages"].append({"role": "user", "content": user_msg})
 
+    # System prompt
+    system_prompt = {"role": "system", "content": "You are a helpful assistant."}
+
+    # Manage context and get messages to send
+    context_messages, token_count, response_limit = manage_context(chat, system_prompt)
+    
+    logging.info(f"Sending {token_count} tokens to OpenAI for chat_id={chat_id}, response limit: {response_limit}")
+
     try:
-        system_prompt = {"role": "system", "content": "You are a helpful assistant."}
-
-        # Estimate and trim messages to fit token window
-        trimmed_messages, estimated_tokens = get_recent_messages(
-            [{"role": msg["role"], "content": msg["content"]} for msg in chat["messages"]],
-            max_tokens=4000
-        )
-
-        messages = [system_prompt] + trimmed_messages
-        logging.info(f"Sending estimated {estimated_tokens} tokens to OpenAI for chat_id={chat_id}")
-
         response = client.chat.completions.create(
             model="gpt-4o",
-            messages=messages,
+            messages=context_messages,
             temperature=0.2,
-            max_tokens=4000
+            max_tokens=response_limit
         )
-
         reply = response.choices[0].message.content
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"OpenAI API error: {e}")
+        return jsonify({"error": f"Failed to get response: {str(e)}"}), 500
 
+    # Add assistant response
     chat["messages"].append({"role": "assistant", "content": reply})
-    if chat["title"] == "New Chat":
+
+    # Update title if it's a new chat
+    if chat.get("title", "New Chat") == "New Chat":
         chat["title"] = user_msg[:30] + ("..." if len(user_msg) > 30 else "")
 
+    # Save chat
     save_chat(chat)
-    return jsonify({"reply": reply})
+    
+    return jsonify({
+        "reply": reply,
+        "context_tokens": token_count,
+        "response_limit": response_limit,
+        "total_messages": len(chat["messages"]),
+        "has_summary": bool(chat.get("summary"))
+    })
 
 @app.route("/api/chat/<chat_id>", methods=["DELETE"])
 def delete_chat(chat_id):
@@ -167,6 +344,37 @@ def rename_chat(chat_id):
 
     return jsonify({"chat_id": chat_id, "new_title": new_title})
 
+@app.route("/api/chat/<chat_id>/stats", methods=["GET"])
+def get_chat_stats(chat_id):
+    """Get statistics about the chat for debugging/monitoring."""
+    try:
+        chat = load_chat(chat_id)
+        if not chat:
+            return jsonify({"error": "Chat not found"}), 404
+        
+        messages = chat.get("messages", [])
+        summary = chat.get("summary")
+        
+        # Calculate some basic stats
+        total_messages = len(messages)
+        total_tokens = count_message_tokens(messages)
+        summary_tokens = estimate_tokens(summary) if summary else 0
+        
+        recent_messages = messages[-RECENT_MESSAGES_COUNT:] if messages else []
+        recent_tokens = count_message_tokens(recent_messages)
+        
+        return jsonify({
+            "chat_id": chat_id,
+            "total_messages": total_messages,
+            "total_tokens": total_tokens,
+            "summary_tokens": summary_tokens,
+            "recent_messages_count": len(recent_messages),
+            "recent_tokens": recent_tokens,
+            "has_summary": bool(summary),
+            "estimated_next_context_tokens": recent_tokens + summary_tokens + 50  # +50 for system prompt
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
