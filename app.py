@@ -7,7 +7,7 @@ import logging
 import re
 from uuid import uuid4
 from dotenv import load_dotenv
-import tiktoken  # Import tiktoken
+import tiktoken
 
 # Configuration constants
 MAX_MODEL_TOKENS = 30000  # Conservative limit for GPT-4o (actual is ~32k)
@@ -109,7 +109,7 @@ Keep the summary under {max_tokens//4} words. Here's the conversation:
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",  # Use cheaper model for summarization
+            model="gpt-4.1-mini",  # Use cheaper model for summarization
             messages=[
                 {"role": "system", "content": "You are an expert at creating concise, informative conversation summaries."},
                 {"role": "user", "content": prompt}
@@ -280,7 +280,7 @@ def send_message(chat_id):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1",
             messages=context_messages,
             temperature=0.2,
             max_tokens=response_limit
