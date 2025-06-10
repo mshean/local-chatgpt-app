@@ -4,9 +4,10 @@ import openai
 import os
 import json
 import logging
-import time
+import re
 from uuid import uuid4
 from dotenv import load_dotenv
+import tiktoken  # Import tiktoken
 
 # Configuration constants
 MAX_MODEL_TOKENS = 30000  # Conservative limit for GPT-4o (actual is ~32k)
@@ -32,6 +33,9 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 CHAT_DIR = "chats"
 os.makedirs(CHAT_DIR, exist_ok=True)
 
+# Initialize tiktoken encoder
+encoder = tiktoken.encoding_for_model('gpt-4o')
+
 def get_chat_path(chat_id):
     return os.path.join(CHAT_DIR, f"{chat_id}.json")
 
@@ -48,24 +52,11 @@ def save_chat(chat):
 
 def estimate_tokens(text):
     """
-    Better token estimation using multiple heuristics.
-    GPT-4 averages about 3.2-3.8 characters per token for English text.
+    Use tiktoken to estimate the number of tokens in a text.
     """
     if not text:
         return 0
-    
-    # Use a more accurate estimate
-    char_count = len(text)
-    word_count = len(text.split())
-    
-    # Estimate based on characters (more conservative)
-    char_estimate = char_count / 3.5
-    
-    # Estimate based on words (GPT models average ~1.3 tokens per word)
-    word_estimate = word_count * 1.3
-    
-    # Use the higher estimate to be conservative
-    return int(max(char_estimate, word_estimate))
+    return len(encoder.encode(text))
 
 def count_message_tokens(messages):
     """Count tokens for a list of messages, including role overhead."""
@@ -144,19 +135,22 @@ def detect_conversation_type(messages):
     
     # Check recent messages for code indicators
     recent_text = " ".join([msg.get("content", "")[-500:] for msg in messages[-3:]])
-    code_indicators = ["```", "def ", "class ", "import ", "function", "const ", "let ", "var ", 
-                      "public class", "#!/", "<script", "SELECT", "FROM", "WHERE"]
     
-    code_score = sum(1 for indicator in code_indicators if indicator in recent_text)
+    # Use regular expressions to detect code patterns
+    code_patterns = [
+        r"```[\s\S]*?```",  # Code blocks
+        r"\bdef\b", r"\bclass\b", r"\bimport\b",  # Python keywords
+        r"\bfunction\b", r"\bconst\b", r"\blet\b", r"\bvar\b",  # JavaScript keywords
+        r"\bpublic class\b", r"#\!/", r"<script",  # Other languages
+        r"\bSELECT\b", r"\bFROM\b", r"\bWHERE\b"  # SQL keywords
+    ]
+    
+    code_score = sum(1 for pattern in code_patterns if re.search(pattern, recent_text, re.IGNORECASE))
     
     return "code" if code_score >= 2 else "general"
 
 def get_response_token_limit(conversation_type):
-    """Get appropriate response token limit based on conversation type."""
-    if conversation_type == "code":
-        return 8000  # More tokens for code responses
-    else:
-        return 3000  # Standard for general conversation
+    return 8000
 
 def manage_context(chat, system_prompt):
     """

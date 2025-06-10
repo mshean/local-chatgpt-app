@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import './App.css';
 import ReactMarkdown from 'react-markdown';
-import SyntaxHighlighter from 'react-syntax-highlighter';
-import { docco } from 'react-syntax-highlighter/dist/esm/styles/hljs';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { debounce } from 'lodash';
 
 function App() {
@@ -11,7 +10,17 @@ function App() {
   const [chats, setChats] = useState([]);
   const [editingTitle, setEditingTitle] = useState(null);
   const [newTitle, setNewTitle] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [currentMessage, setCurrentMessage] = useState('');
+  const [pastedCode, setPastedCode] = useState('');
   const inputRef = useRef();
+  const messagesEndRef = useRef();
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -29,8 +38,8 @@ function App() {
         console.error('Error fetching chats:', error);
       }
     };
-
     fetchChats();
+    // eslint-disable-next-line
   }, []);
 
   const loadChatMessages = async (chatId) => {
@@ -47,45 +56,60 @@ function App() {
     }
   };
 
-  // Removed setMessage from handleInputChange
   const handleInputChange = useCallback(
     debounce((value) => {
-      // You can perform any logic here if needed
-    }, 300), // Adjust the debounce delay as needed
+      // Future: Auto-save drafts
+    }, 300),
     []
   );
 
-  const handleSendMessage = async () => {
-    const message = inputRef.current.value;
-    if (!message.trim()) return;
+  const handleSendMessage = async (e) => {
+    e?.preventDefault();
+    const message = currentMessage.trim();
+    if (!message || isLoading) return;
 
-    setMessages((prevMessages) => [
-      ...prevMessages,
-      { role: 'user', content: message },
-    ]);
+    setMessages((prev) => [...prev, { role: 'user', content: message }]);
+    setCurrentMessage('');
+    setIsLoading(true);
 
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${currentChatId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, code: pastedCode }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        setMessages((prevMessages) => [
-          ...prevMessages,
-          { role: 'assistant', content: data.reply },
-        ]);
+        setMessages((prev) => [...prev, { role: 'assistant', content: data.reply }]);
+        if (data.reply) {
+          const updatedChats = await fetch('http://127.0.0.1:5000/api/chats').then(r => r.json());
+          if (Array.isArray(updatedChats)) {
+            setChats(updatedChats);
+          }
+        }
       } else {
-        console.error('Error:', data.error);
+        setMessages((prev) => [...prev, { 
+          role: 'assistant', 
+          content: 'Sorry, I encountered an error. Please try again.' 
+        }]);
       }
     } catch (error) {
-      console.error('Error with fetch:', error);
+      setMessages((prev) => [...prev, { 
+        role: 'assistant', 
+        content: 'Network error. Please check your connection and try again.' 
+      }]);
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    inputRef.current.value = ''; // Clear the input
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
   };
 
   const handleNewChat = async () => {
@@ -99,9 +123,7 @@ function App() {
       if (response.ok) {
         setCurrentChatId(data.chat_id);
         setMessages([]);
-        setChats((prevChats) => [...prevChats, data]);
-      } else {
-        console.error('Error creating chat:', data.error);
+        setChats((prev) => [data, ...prev]);
       }
     } catch (error) {
       console.error('Error with fetch:', error);
@@ -113,29 +135,29 @@ function App() {
     loadChatMessages(chatId);
   };
 
-  const handleDeleteChat = async (chatId) => {
+  const handleDeleteChat = async (chatId, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this conversation?')) return;
+
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}`, {
         method: 'DELETE',
       });
 
-      const data = await response.json();
-
       if (response.ok) {
-        setChats((prevChats) => prevChats.filter(chat => chat.chat_id !== chatId));
+        setChats((prev) => prev.filter(chat => chat.chat_id !== chatId));
         if (chatId === currentChatId) {
           setCurrentChatId('');
           setMessages([]);
         }
-      } else {
-        console.error('Error deleting chat:', data.error);
       }
     } catch (error) {
       console.error('Error with fetch:', error);
     }
   };
 
-  const handleRenameChat = (chatId) => {
+  const handleRenameChat = (chatId, e) => {
+    e.stopPropagation();
     setEditingTitle(chatId);
     const chat = chats.find(c => c.chat_id === chatId);
     setNewTitle(chat.title);
@@ -149,148 +171,546 @@ function App() {
         body: JSON.stringify({ title: newTitle }),
       });
 
-      const data = await response.json();
-
       if (response.ok) {
-        setChats((prevChats) =>
-          prevChats.map((chat) =>
+        setChats((prev) =>
+          prev.map((chat) =>
             chat.chat_id === chatId ? { ...chat, title: newTitle } : chat
           )
         );
         setEditingTitle(null);
-      } else {
-        console.error('Error updating title:', data.error);
       }
     } catch (error) {
       console.error('Error with fetch:', error);
     }
   };
 
-  const handleCopy = (code) => {
-    navigator.clipboard.writeText(code).then(() => {
-      alert('Code copied to clipboard!');
-    }).catch(err => {
+  const handleCopy = async (code) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      // You could add a toast notification here
+    } catch (err) {
       console.error('Failed to copy: ', err);
-    });
+    }
   };
 
-  const renderChats = () => {
-    return chats.map((chat) => (
-      <div key={chat.chat_id} className="chat-item">
-        <div className="chat-title-container">
-          {editingTitle === chat.chat_id ? (
-            <>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                className="chat-title-input"
-              />
-              <button onClick={() => handleSaveTitle(chat.chat_id)} className="save-title-button">
-                Save
-              </button>
-            </>
-          ) : (
-            <>
-              <span
-                className="chat-title"
-                onClick={() => handleReopenChat(chat.chat_id)}
-              >
-                {chat.title}
-              </span>
-              <button
-                onClick={() => handleRenameChat(chat.chat_id)}
-                className="rename-chat-button"
-              >
-                ✎
-              </button>
-            </>
-          )}
-        </div>
-        <button
-          onClick={() => handleDeleteChat(chat.chat_id)}
-          className="delete-chat-button"
-        >
-          ❌
-        </button>
-      </div>
-    ));
+  const isCodeLine = (line) => {
+    // Simple heuristic checks
+    const codeKeywords = ['function', 'var', 'let', 'const', 'if', 'else', 'return', 'class'];
+    const codeSymbols = ['{', '}', '(', ')', ';', '=', '=>'];
+  
+    // Check for indentation
+    if (/^\s{2,}/.test(line)) return true;
+  
+    // Check for code keywords
+    if (codeKeywords.some(keyword => line.includes(keyword))) return true;
+  
+    // Check for code symbols
+    if (codeSymbols.some(symbol => line.includes(symbol))) return true;
+  
+    return false;
   };
+  
+  const handlePaste = (e) => {
+    const clipboardData = e.clipboardData || window.clipboardData;
+    const pastedData = clipboardData.getData('Text');
+  
+    const lines = pastedData.split('\n');
+    const codeLines = lines.filter(isCodeLine);
+  
+    if (codeLines.length > 0) {
+      e.preventDefault();
+      const code = codeLines.join('\n');
+      setPastedCode((prev) => prev + '\n' + code);
+      // Optionally, append the code to the current message
+      setCurrentMessage((prev) => prev + '\n' + code);
+    }
+  };
+
+  const LoadingIndicator = () => (
+    <div className="loading-message">
+      <div className="loading-dots">
+        <div></div>
+        <div></div>
+        <div></div>
+      </div>
+    </div>
+  );
 
   const MessageList = React.memo(({ messages }) => {
+    if (messages.length === 0) {
+      return (
+        <div className="welcome-screen">
+          <div className="welcome-content">
+            <h1>How can I help you today?</h1>
+            <div className="example-prompts">
+              <button 
+                className="example-prompt"
+                onClick={() => setCurrentMessage("Explain quantum computing in simple terms")}
+              >
+                Explain quantum computing
+              </button>
+              <button 
+                className="example-prompt"
+                onClick={() => setCurrentMessage("Write a Python function to reverse a string")}
+              >
+                Write a Python function
+              </button>
+              <button 
+                className="example-prompt"
+                onClick={() => setCurrentMessage("Plan a weekend trip to Paris")}
+              >
+                Plan a weekend trip
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="message-container">
+      <div className="chat-center-column">
         {messages.map((msg, index) => (
-          <div
-            key={index}
-            className={`message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`}
-          >
-            <ReactMarkdown
-              children={msg.content}
-              components={{
-                code: ({ node, inline, className, children, ...props }) => {
-                  const match = /language-(\w+)/.exec(className || '');
-                  const codeString = String(children).replace(/\n$/, '');
-                  return !inline && match ? (
-                    <div style={{ position: 'relative' }}>
-                      <SyntaxHighlighter
-                        style={docco}
-                        language={match[1]}
-                        PreTag="div"
-                        {...props}
-                      >
-                        {codeString}
-                      </SyntaxHighlighter>
-                      <button
-                        onClick={() => handleCopy(codeString)}
-                        style={{
-                          position: 'absolute',
-                          top: '10px',
-                          right: '10px',
-                          backgroundColor: '#4f46e5',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '4px',
-                          padding: '5px 10px',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  ) : (
-                    <code {...props}>{children}</code>
-                  );
-                },
-              }}
-            />
+          <div key={index} className={`message-block ${msg.role}`}>
+            <div className="msg-avatar">
+              {msg.role === 'user' ? '🧑' : '🤖'}
+            </div>
+            <div className="msg-bubble">
+              <ReactMarkdown
+                components={{
+                  code: ({ node, inline, className, children, ...props }) => {
+                    const match = /language-(\w+)/.exec(className || '');
+                    const codeString = String(children).replace(/\n$/, '');
+                    return !inline && match ? (
+                      <div className="code-block-container">
+                        <div className="code-block-header">
+                          <span className="code-language">{match[1]}</span>
+                          <button
+                            onClick={() => handleCopy(codeString)}
+                            className="copy-button"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                        <SyntaxHighlighter
+                          style={oneDark}
+                          language={match[1]}
+                          PreTag="div"
+                          {...props}
+                        >
+                          {codeString}
+                        </SyntaxHighlighter>
+                      </div>
+                    ) : (
+                      <code className="inline-code" {...props}>{children}</code>
+                    );
+                  },
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
+            </div>
           </div>
         ))}
+        {isLoading && <LoadingIndicator />}
+        <div ref={messagesEndRef} />
       </div>
     );
   });
 
   return (
-    <div className="App">
-      <div className="sidebar">
-        <button onClick={handleNewChat} className="new-chat-btn">
-          New Chat
-        </button>
-        <div className="chat-list">
-          {renderChats()}
+    <div className="app">
+      <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <div className="sidebar-header">
+          <button onClick={handleNewChat} className="new-chat-btn">
+            ➕ New chat
+          </button>
+          <button 
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="collapse-btn"
+          >
+            {sidebarCollapsed ? '→' : '←'}
+          </button>
         </div>
+        {!sidebarCollapsed && (
+          <div className="chat-list">
+            {chats.map((chat) => (
+              <div 
+                key={chat.chat_id} 
+                className={`chat-item ${chat.chat_id === currentChatId ? 'active' : ''}`}
+                onClick={() => handleReopenChat(chat.chat_id)}
+              >
+                {editingTitle === chat.chat_id ? (
+                  <div className="chat-edit-container">
+                    <input
+                      type="text"
+                      value={newTitle}
+                      onChange={(e) => setNewTitle(e.target.value)}
+                      className="chat-title-input"
+                      onBlur={() => handleSaveTitle(chat.chat_id)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleSaveTitle(chat.chat_id)}
+                      autoFocus
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="chat-title" title={chat.title}>
+                      {chat.title}
+                    </div>
+                    <div className="chat-actions">
+                      <button
+                        onClick={(e) => handleRenameChat(chat.chat_id, e)}
+                        className="chat-action-btn"
+                        title="Rename"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteChat(chat.chat_id, e)}
+                        className="chat-action-btn delete"
+                        title="Delete"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      <div className="chat-area">
+
+      <div className="main-content">
         <MessageList messages={messages} />
-        <div className="message-input-container">
-          <textarea
-            ref={inputRef}
-            onChange={(e) => handleInputChange(e.target.value)}
-            placeholder="Type your message..."
-          />
-          <button onClick={handleSendMessage}>Send</button>
+        <div className="input-container">
+          <div className="input-form">
+            <div className="input-wrapper">
+              <textarea
+                ref={inputRef}
+                value={currentMessage}
+                onChange={(e) => {
+                  setCurrentMessage(e.target.value);
+                  handleInputChange(e.target.value);
+                }}
+                onKeyDown={handleKeyPress}
+                onPaste={handlePaste}
+                placeholder="Message ChatGPT..."
+                className="message-input"
+                rows={1}
+                disabled={isLoading}
+              />
+              <button 
+                onClick={handleSendMessage}
+                className={`send-button ${currentMessage.trim() && !isLoading ? 'active' : ''}`}
+                disabled={!currentMessage.trim() || isLoading}
+              >
+                {isLoading ? '⏳' : '↑'}
+              </button>
+            </div>
+          </div>
+          <div className="input-footer">
+            ChatGPT can make mistakes. Consider checking important information.
+          </div>
         </div>
       </div>
+      <style>{`
+        * { box-sizing: border-box; }
+        body {
+          margin: 0;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background-color: #212121;
+          color: #ececec;
+        }
+        .app {
+          display: flex;
+          height: 100vh;
+          background-color: #212121;
+          overflow: hidden; /* Prevents the entire app from scrolling */
+        }
+        .sidebar {
+          width: 260px;
+          background-color: #171717;
+          display: flex;
+          flex-direction: column;
+          border-right: 1px solid #2f2f2f;
+          overflow-y: auto; /* Allows the sidebar to scroll if its content is too long */
+          transition: width 0.2s ease;
+        }
+        .sidebar.collapsed { width: 50px; }
+        .sidebar-header {
+          padding: 16px;
+          display: flex;
+          gap: 8px;
+          border-bottom: 1px solid #2f2f2f;
+        }
+        .new-chat-btn {
+          flex: 1;
+          background: #2f2f2f;
+          color: #ececec;
+          border: 1px solid #4a4a4a;
+          border-radius: 8px;
+          padding: 12px;
+          cursor: pointer;
+          font-size: 14px;
+          transition: all 0.2s;
+        }
+        .new-chat-btn:hover { background: #3a3a3a; }
+        .collapse-btn {
+          background: transparent;
+          border: 1px solid #4a4a4a;
+          color: #ececec;
+          border-radius: 8px;
+          padding: 12px;
+          cursor: pointer;
+          width: 44px;
+        }
+        .chat-list {
+          flex: 1;
+          overflow-y: auto;
+          padding: 8px;
+        }
+        .chat-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px;
+          margin-bottom: 4px;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+        .chat-item:hover, .chat-item.active { background-color: #2f2f2f; }
+        .chat-title {
+          flex: 1;
+          font-size: 14px;
+          color: #ececec;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          margin-right: 8px;
+        }
+        .chat-actions {
+          display: flex;
+          gap: 4px;
+          opacity: 0;
+          transition: opacity 0.2s;
+        }
+        .chat-item:hover .chat-actions { opacity: 1; }
+        .chat-action-btn {
+          background: transparent;
+          border: none;
+          color: #8e8ea0;
+          cursor: pointer;
+          padding: 4px;
+          border-radius: 4px;
+          font-size: 12px;
+        }
+        .chat-action-btn:hover { background: #3a3a3a; color: #ececec; }
+        .chat-action-btn.delete:hover { color: #ff6b6b; }
+        .chat-edit-container { flex: 1; }
+        .chat-title-input {
+          width: 100%;
+          background: #2f2f2f;
+          border: 1px solid #4a4a4a;
+          color: #ececec;
+          border-radius: 6px;
+          padding: 6px 8px;
+          font-size: 14px;
+        }
+        .main-content {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          background: #212121;
+          overflow-y: auto; /* Allows the main content to scroll */
+          min-width: 0;
+        }
+        .chat-center-column {
+          width: 100%;
+          max-width: 700px;
+          margin: 0 auto;
+          padding: 24px 0 0 0;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+        .message-block {
+          display: flex;
+          align-items: flex-start;
+          gap: 14px;
+          width: 100%;
+        }
+        .message-block.user .msg-avatar {
+          background: #0a84ff;
+          color: #fff;
+        }
+        .message-block.assistant .msg-avatar {
+          background: #4b5563;
+          color: #fff;
+        }
+        .msg-avatar {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          font-size: 1.5rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-top: 4px;
+          flex-shrink: 0;
+        }
+        .msg-bubble {
+          background: #282828;
+          color: #ececec;
+          border-radius: 10px;
+          padding: 16px 18px;
+          font-size: 16px;
+          line-height: 1.7;
+          word-break: break-word;
+          max-width: 100%;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+        }
+        .message-block.user .msg-bubble {
+          background: #0a192f;
+        }
+        .message-block.assistant .msg-bubble {
+          background: #232336;
+        }
+        .inline-code {
+          background: #232336;
+          color: #ffb86b;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 15px;
+        }
+        .code-block-container {
+          margin: 12px 0;
+          border-radius: 8px;
+          overflow: hidden;
+          background: #181825;
+          border: 1px solid #232336;
+        }
+        .code-block-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: #232336;
+          padding: 6px 12px;
+        }
+        .code-language {
+          color: #8e8ea0;
+          font-size: 13px;
+        }
+        .copy-button {
+          background: #232336;
+          border: 1px solid #393950;
+          color: #ececec;
+          border-radius: 6px;
+          padding: 2px 8px;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .copy-button:hover { background: #393950; }
+        .input-container {
+          padding: 0 32px 24px 32px;
+          background: linear-gradient(0deg, #212121 80%, rgba(33,33,33,0.7) 100%);
+          width: 100%;
+        }
+        .input-form {
+          display: flex;
+          align-items: flex-end;
+        }
+        .input-wrapper {
+          flex: 1;
+          display: flex;
+          align-items: flex-end;
+          background: #232336;
+          border-radius: 12px;
+          padding: 12px 16px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .message-input {
+          flex: 1;
+          background: transparent;
+          border: none;
+          color: #ececec;
+          font-size: 16px;
+          resize: none;
+          outline: none;
+          padding: 0;
+          min-height: 32px;
+          max-height: 160px;
+        }
+        .send-button {
+          background: #232336;
+          border: none;
+          color: #8e8ea0;
+          border-radius: 8px;
+          padding: 8px 14px;
+          font-size: 18px;
+          cursor: pointer;
+          margin-left: 8px;
+          transition: background 0.2s, color 0.2s;
+        }
+        .send-button.active { color: #ececec; background: #393950; }
+        .send-button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .input-footer {
+          margin-top: 8px;
+          font-size: 13px;
+          color: #8e8ea0;
+        }
+        .loading-message {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 40px;
+        }
+        .loading-dots {
+          display: flex;
+          gap: 4px;
+        }
+        .loading-dots div {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #8e8ea0;
+          animation: loading-bounce 1s infinite alternate;
+        }
+        .loading-dots div:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dots div:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes loading-bounce {
+          to { transform: translateY(-8px); opacity: 0.6; }
+        }
+        .welcome-screen {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          color: #ececec;
+        }
+        .welcome-content h1 { font-size: 2rem; margin-bottom: 24px; }
+        .example-prompts { display: flex; gap: 12px; }
+        .example-prompt {
+          background: #2f2f2f;
+          color: #ececec;
+          border: 1px solid #4a4a4a;
+          border-radius: 8px;
+          padding: 8px 16px;
+          cursor: pointer;
+          font-size: 14px;
+        }
+        .example-prompt:hover { background: #3a3a3a; }
+        @media (max-width: 800px) {
+          .chat-center-column {
+            max-width: 100vw;
+            padding: 8px 0 0 0;
+          }
+          .main-content {
+            padding: 0;
+          }
+        }
+      `}</style>
     </div>
   );
 }
