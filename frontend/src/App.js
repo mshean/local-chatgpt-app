@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { debounce } from 'lodash';
+import { Virtuoso } from 'react-virtuoso';
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -12,15 +13,24 @@ function App() {
   const [newTitle, setNewTitle] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [currentMessage, setCurrentMessage] = useState('');
   const [pastedCode, setPastedCode] = useState('');
   const inputRef = useRef();
-  const messagesEndRef = useRef();
+  const messageInputRef = useRef('');
+  const virtuosoRef = useRef(); // Reference to the Virtuoso component
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+    if (messages.length > 0 && virtuosoRef.current) {
+      // Small delay to ensure the message is rendered before scrolling
+      setTimeout(() => {
+        virtuosoRef.current.scrollToIndex({
+          index: messages.length - 1,
+          align: 'end',
+          behavior: 'smooth'
+        });
+      }, 100);
+    }
+  }, [messages]);
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -39,48 +49,55 @@ function App() {
       }
     };
     fetchChats();
-    // eslint-disable-next-line
   }, []);
 
-  const loadChatMessages = async (chatId) => {
+  const loadChatMessages = useCallback(async (chatId) => {
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}`);
       const data = await response.json();
       if (response.ok) {
         setMessages(data.messages);
+        // Scroll to bottom after loading messages
+        setTimeout(() => {
+          if (virtuosoRef.current && data.messages.length > 0) {
+            virtuosoRef.current.scrollToIndex({
+              index: data.messages.length - 1,
+              align: 'end',
+              behavior: 'auto'
+            });
+          }
+        }, 100);
       } else {
         console.error('Error loading chat messages:', data.error);
       }
     } catch (error) {
       console.error('Error with fetch:', error);
     }
-  };
+  }, []);
 
-  const handleInputChange = useCallback(
-    debounce((value) => {
-      // Future: Auto-save drafts
-    }, 300),
-    []
-  );
-
-  const handleSendMessage = async (e) => {
+  const handleSendMessage = useCallback(async (e) => {
     e?.preventDefault();
-    const message = currentMessage.trim();
+    const message = messageInputRef.current.trim();
     if (!message || isLoading) return;
-
+    
+    // Clear the input immediately
+    const inputElement = inputRef.current;
+    if (inputElement) {
+      inputElement.value = '';
+      inputElement.style.height = 'auto'; // Reset height for auto-resize
+    }
+    
     setMessages((prev) => [...prev, { role: 'user', content: message }]);
-    setCurrentMessage('');
+    messageInputRef.current = '';
     setIsLoading(true);
-
+    
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${currentChatId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, code: pastedCode }),
       });
-
       const data = await response.json();
-
       if (response.ok) {
         setMessages((prev) => [...prev, { role: 'assistant', content: data.reply }]);
         if (data.reply) {
@@ -103,23 +120,21 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [currentChatId, isLoading, pastedCode]);
 
-  const handleKeyPress = (e) => {
+  const handleKeyPress = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
     }
-  };
+  }, [handleSendMessage]);
 
-  const handleNewChat = async () => {
+  const handleNewChat = useCallback(async () => {
     try {
       const response = await fetch('http://127.0.0.1:5000/api/chat', {
         method: 'POST',
       });
-
       const data = await response.json();
-
       if (response.ok) {
         setCurrentChatId(data.chat_id);
         setMessages([]);
@@ -128,22 +143,20 @@ function App() {
     } catch (error) {
       console.error('Error with fetch:', error);
     }
-  };
+  }, []);
 
-  const handleReopenChat = async (chatId) => {
+  const handleReopenChat = useCallback((chatId) => {
     setCurrentChatId(chatId);
     loadChatMessages(chatId);
-  };
+  }, [loadChatMessages]);
 
-  const handleDeleteChat = async (chatId, e) => {
+  const handleDeleteChat = useCallback(async (chatId, e) => {
     e.stopPropagation();
     if (!window.confirm('Delete this conversation?')) return;
-
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}`, {
         method: 'DELETE',
       });
-
       if (response.ok) {
         setChats((prev) => prev.filter(chat => chat.chat_id !== chatId));
         if (chatId === currentChatId) {
@@ -154,23 +167,22 @@ function App() {
     } catch (error) {
       console.error('Error with fetch:', error);
     }
-  };
+  }, [currentChatId]);
 
-  const handleRenameChat = (chatId, e) => {
+  const handleRenameChat = useCallback((chatId, e) => {
     e.stopPropagation();
     setEditingTitle(chatId);
     const chat = chats.find(c => c.chat_id === chatId);
     setNewTitle(chat.title);
-  };
+  }, [chats]);
 
-  const handleSaveTitle = async (chatId) => {
+  const handleSaveTitle = useCallback(async (chatId) => {
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${chatId}/rename`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle }),
       });
-
       if (response.ok) {
         setChats((prev) =>
           prev.map((chat) =>
@@ -182,49 +194,47 @@ function App() {
     } catch (error) {
       console.error('Error with fetch:', error);
     }
-  };
+  }, [newTitle]);
 
-  const handleCopy = async (code) => {
+  const handleCopy = useCallback(async (code) => {
     try {
       await navigator.clipboard.writeText(code);
       // You could add a toast notification here
     } catch (err) {
       console.error('Failed to copy: ', err);
     }
-  };
+  }, []);
 
   const isCodeLine = (line) => {
-    // Simple heuristic checks
     const codeKeywords = ['function', 'var', 'let', 'const', 'if', 'else', 'return', 'class'];
     const codeSymbols = ['{', '}', '(', ')', ';', '=', '=>'];
-  
-    // Check for indentation
     if (/^\s{2,}/.test(line)) return true;
-  
-    // Check for code keywords
     if (codeKeywords.some(keyword => line.includes(keyword))) return true;
-  
-    // Check for code symbols
     if (codeSymbols.some(symbol => line.includes(symbol))) return true;
-  
     return false;
   };
-  
+
   const handlePaste = (e) => {
     const clipboardData = e.clipboardData || window.clipboardData;
     const pastedData = clipboardData.getData('Text');
-  
     const lines = pastedData.split('\n');
     const codeLines = lines.filter(isCodeLine);
-  
     if (codeLines.length > 0) {
       e.preventDefault();
       const code = codeLines.join('\n');
       setPastedCode((prev) => prev + '\n' + code);
-      // Optionally, append the code to the current message
-      setCurrentMessage((prev) => prev + '\n' + code);
+      messageInputRef.current += '\n' + code;
     }
   };
+
+  // Auto-resize textarea
+  const handleInputChange = useCallback((e) => {
+    messageInputRef.current = e.target.value;
+    
+    // Auto-resize the textarea
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
+  }, []);
 
   const LoadingIndicator = () => (
     <div className="loading-message">
@@ -245,19 +255,34 @@ function App() {
             <div className="example-prompts">
               <button 
                 className="example-prompt"
-                onClick={() => setCurrentMessage("Explain quantum computing in simple terms")}
+                onClick={() => {
+                  messageInputRef.current = "Explain quantum computing in simple terms";
+                  if (inputRef.current) {
+                    inputRef.current.value = messageInputRef.current;
+                  }
+                }}
               >
                 Explain quantum computing
               </button>
               <button 
                 className="example-prompt"
-                onClick={() => setCurrentMessage("Write a Python function to reverse a string")}
+                onClick={() => {
+                  messageInputRef.current = "Write a Python function to reverse a string";
+                  if (inputRef.current) {
+                    inputRef.current.value = messageInputRef.current;
+                  }
+                }}
               >
                 Write a Python function
               </button>
               <button 
                 className="example-prompt"
-                onClick={() => setCurrentMessage("Plan a weekend trip to Paris")}
+                onClick={() => {
+                  messageInputRef.current = "Plan a weekend trip to Paris";
+                  if (inputRef.current) {
+                    inputRef.current.value = messageInputRef.current;
+                  }
+                }}
               >
                 Plan a weekend trip
               </button>
@@ -266,55 +291,65 @@ function App() {
         </div>
       );
     }
+
     return (
-      <div className="chat-center-column">
-        {messages.map((msg, index) => (
-          <div key={index} className={`message-block ${msg.role}`}>
-            <div className="msg-avatar">
-              {msg.role === 'user' ? '🧑' : '🤖'}
-            </div>
-            <div className="msg-bubble">
-              <ReactMarkdown
-                components={{
-                  code: ({ node, inline, className, children, ...props }) => {
-                    const match = /language-(\w+)/.exec(className || '');
-                    const codeString = String(children).replace(/\n$/, '');
-                    return !inline && match ? (
-                      <div className="code-block-container">
-                        <div className="code-block-header">
-                          <span className="code-language">{match[1]}</span>
-                          <button
-                            onClick={() => handleCopy(codeString)}
-                            className="copy-button"
-                          >
-                            📋 Copy
-                          </button>
-                        </div>
-                        <SyntaxHighlighter
-                          style={oneDark}
-                          language={match[1]}
-                          PreTag="div"
-                          {...props}
-                        >
-                          {codeString}
-                        </SyntaxHighlighter>
-                      </div>
-                    ) : (
-                      <code className="inline-code" {...props}>{children}</code>
-                    );
-                  },
-                }}
-              >
-                {msg.content}
-              </ReactMarkdown>
-            </div>
-          </div>
-        ))}
-        {isLoading && <LoadingIndicator />}
-        <div ref={messagesEndRef} />
+      <div style={{ height: '100%', width: '100%', padding: '24px 32px 0 32px' }}>
+        <div style={{ maxWidth: '700px', margin: '0 auto', height: '100%' }}>
+          <Virtuoso
+            ref={virtuosoRef}
+            style={{ height: '100%', width: '100%' }}
+            totalCount={messages.length}
+            itemContent={(index) => {
+              const msg = messages[index];
+              return (
+                <div key={index} className={`message-block ${msg.role}`} style={{ marginBottom: '16px' }}>
+                  <div className="msg-avatar">
+                    {msg.role === 'user' ? '🧑' : '🤖'}
+                  </div>
+                  <div className="msg-bubble">
+                    <ReactMarkdown
+                      components={{
+                        code: ({ node, inline, className, children, ...props }) => {
+                          const match = /language-(\w+)/.exec(className || '');
+                          const codeString = String(children).replace(/\n$/, '');
+                          return !inline && match ? (
+                            <div className="code-block-container">
+                              <div className="code-block-header">
+                                <span className="code-language">{match[1]}</span>
+                                <button
+                                  onClick={() => handleCopy(codeString)}
+                                  className="copy-button"
+                                >
+                                  📋 Copy
+                                </button>
+                              </div>
+                              <SyntaxHighlighter
+                                style={oneDark}
+                                language={match[1]}
+                                PreTag="div"
+                                {...props}
+                              >
+                                {codeString}
+                              </SyntaxHighlighter>
+                            </div>
+                          ) : (
+                            <code className="inline-code" {...props}>{children}</code>
+                          );
+                        },
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              );
+            }}
+            followOutput="smooth"
+          />
+        </div>
       </div>
     );
-  });
+  }, (prevProps, nextProps) => prevProps.messages === nextProps.messages);
 
   return (
     <div className="app">
@@ -378,19 +413,22 @@ function App() {
           </div>
         )}
       </div>
-
       <div className="main-content">
         <MessageList messages={messages} />
+        {isLoading && (
+          <div style={{ padding: '0 32px' }}>
+            <div style={{ maxWidth: '700px', margin: '0 auto' }}>
+              <LoadingIndicator />
+            </div>
+          </div>
+        )}
         <div className="input-container">
           <div className="input-form">
             <div className="input-wrapper">
               <textarea
                 ref={inputRef}
-                value={currentMessage}
-                onChange={(e) => {
-                  setCurrentMessage(e.target.value);
-                  handleInputChange(e.target.value);
-                }}
+                defaultValue={messageInputRef.current}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyPress}
                 onPaste={handlePaste}
                 placeholder="Message ChatGPT..."
@@ -400,8 +438,8 @@ function App() {
               />
               <button 
                 onClick={handleSendMessage}
-                className={`send-button ${currentMessage.trim() && !isLoading ? 'active' : ''}`}
-                disabled={!currentMessage.trim() || isLoading}
+                className={`send-button ${messageInputRef.current.trim() && !isLoading ? 'active' : ''}`}
+                disabled={!messageInputRef.current.trim() || isLoading}
               >
                 {isLoading ? '⏳' : '↑'}
               </button>
@@ -424,7 +462,7 @@ function App() {
           display: flex;
           height: 100vh;
           background-color: #212121;
-          overflow: hidden; /* Prevents the entire app from scrolling */
+          overflow: hidden;
         }
         .sidebar {
           width: 260px;
@@ -432,7 +470,7 @@ function App() {
           display: flex;
           flex-direction: column;
           border-right: 1px solid #2f2f2f;
-          overflow-y: auto; /* Allows the sidebar to scroll if its content is too long */
+          overflow-y: auto;
           transition: width 0.2s ease;
         }
         .sidebar.collapsed { width: 50px; }
@@ -520,19 +558,9 @@ function App() {
           flex: 1;
           display: flex;
           flex-direction: column;
-          align-items: center;
           background: #212121;
-          overflow-y: auto; /* Allows the main content to scroll */
+          overflow: hidden;
           min-width: 0;
-        }
-        .chat-center-column {
-          width: 100%;
-          max-width: 700px;
-          margin: 0 auto;
-          padding: 24px 0 0 0;
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
         }
         .message-block {
           display: flex;
@@ -615,6 +643,8 @@ function App() {
           padding: 0 32px 24px 32px;
           background: linear-gradient(0deg, #212121 80%, rgba(33,33,33,0.7) 100%);
           width: 100%;
+          max-width: 700px;
+          margin: 0 auto;
         }
         .input-form {
           display: flex;
@@ -640,6 +670,7 @@ function App() {
           padding: 0;
           min-height: 32px;
           max-height: 160px;
+          overflow-y: auto;
         }
         .send-button {
           background: #232336;
@@ -651,6 +682,7 @@ function App() {
           cursor: pointer;
           margin-left: 8px;
           transition: background 0.2s, color 0.2s;
+          flex-shrink: 0;
         }
         .send-button.active { color: #ececec; background: #393950; }
         .send-button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -658,16 +690,19 @@ function App() {
           margin-top: 8px;
           font-size: 13px;
           color: #8e8ea0;
+          text-align: center;
         }
         .loading-message {
           display: flex;
           align-items: center;
-          justify-content: center;
-          height: 40px;
+          justify-content: flex-start;
+          padding: 16px;
+          gap: 14px;
         }
         .loading-dots {
           display: flex;
           gap: 4px;
+          margin-left: 50px;
         }
         .loading-dots div {
           width: 8px;
@@ -690,7 +725,7 @@ function App() {
           color: #ececec;
         }
         .welcome-content h1 { font-size: 2rem; margin-bottom: 24px; }
-        .example-prompts { display: flex; gap: 12px; }
+        .example-prompts { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
         .example-prompt {
           background: #2f2f2f;
           color: #ececec;
@@ -702,12 +737,16 @@ function App() {
         }
         .example-prompt:hover { background: #3a3a3a; }
         @media (max-width: 800px) {
-          .chat-center-column {
-            max-width: 100vw;
-            padding: 8px 0 0 0;
+          .input-container {
+            max-width: 100%;
+            padding: 0 16px 24px 16px;
           }
           .main-content {
             padding: 0;
+          }
+          .example-prompts {
+            flex-direction: column;
+            align-items: center;
           }
         }
       `}</style>
