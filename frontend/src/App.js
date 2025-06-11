@@ -6,6 +6,82 @@ import { debounce } from 'lodash';
 import { Virtuoso } from 'react-virtuoso';
 import './App.css';
 
+// Fixed MessageInput component with proper ref handling
+const MessageInput = React.memo(React.forwardRef(({ onSendMessage, isLoading }, ref) => {
+  const [inputValue, setInputValue] = useState('');
+  const textareaRef = useRef(); // Ref for the actual textarea DOM element
+
+  const handleInputChange = useCallback((e) => {
+    const value = e.target.value;
+    setInputValue(value);
+    
+    // Auto-resize the textarea
+    const target = e.target;
+    target.style.height = 'auto';
+    target.style.height = Math.min(target.scrollHeight, 160) + 'px';
+  }, []);
+
+  const handleKeyPress = useCallback((e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (inputValue.trim() && !isLoading) {
+        onSendMessage(inputValue.trim());
+        setInputValue('');
+        // Reset textarea height
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+        }
+      }
+    }
+  }, [inputValue, isLoading, onSendMessage]);
+
+  const handleSendClick = useCallback(() => {
+    if (inputValue.trim() && !isLoading) {
+      onSendMessage(inputValue.trim());
+      setInputValue('');
+      // Reset textarea height
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    }
+  }, [inputValue, isLoading, onSendMessage]);
+
+  // Method to set input value from parent (for example prompts)
+  React.useImperativeHandle(ref, () => ({
+    setValue: (value) => setInputValue(value)
+  }));
+
+  return (
+    <div className="input-container">
+      <div className="input-form">
+        <div className="input-wrapper">
+          <textarea
+            ref={textareaRef} // Use textareaRef for DOM manipulation
+            value={inputValue}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyPress}
+            placeholder="Message ChatGPT..."
+            className="message-input"
+            rows={1}
+            disabled={isLoading}
+            style={{ resize: 'none', overflow: 'hidden' }}
+          />
+          <button 
+            onClick={handleSendClick}
+            className={`send-button ${inputValue.trim() && !isLoading ? 'active' : ''}`}
+            disabled={!inputValue.trim() || isLoading}
+          >
+            {isLoading ? '⏳' : '↑'}
+          </button>
+        </div>
+      </div>
+      <div className="input-footer">
+        ChatGPT can make mistakes. Consider checking important information.
+      </div>
+    </div>
+  );
+}));
+
 function App() {
   const [messages, setMessages] = useState([]);
   const [currentChatId, setCurrentChatId] = useState('');
@@ -14,12 +90,8 @@ function App() {
   const [newTitle, setNewTitle] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [pastedCode, setPastedCode] = useState('');
-  const inputRef = useRef();
-  const messageInputRef = useRef('');
   const virtuosoRef = useRef();
-
-  // Remove manual scrolling - let Virtuoso handle it automatically
+  const messageInputRef = useRef();
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -46,7 +118,6 @@ function App() {
       const data = await response.json();
       if (response.ok) {
         setMessages(data.messages);
-        // Remove the setTimeout scrolling from here - let the useEffect handle it
       } else {
         console.error('Error loading chat messages:', data.error);
       }
@@ -55,27 +126,17 @@ function App() {
     }
   }, []);
 
-  const handleSendMessage = useCallback(async (e) => {
-    e?.preventDefault();
-    const message = messageInputRef.current.trim();
+  const handleSendMessage = useCallback(async (message) => {
     if (!message || isLoading) return;
     
-    // Clear the input immediately
-    const inputElement = inputRef.current;
-    if (inputElement) {
-      inputElement.value = '';
-      inputElement.style.height = 'auto'; // Reset height for auto-resize
-    }
-    
     setMessages((prev) => [...prev, { role: 'user', content: message }]);
-    messageInputRef.current = '';
     setIsLoading(true);
     
     try {
       const response = await fetch(`http://127.0.0.1:5000/api/chat/${currentChatId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, code: pastedCode }),
+        body: JSON.stringify({ message }),
       });
       const data = await response.json();
       if (response.ok) {
@@ -100,14 +161,7 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [currentChatId, isLoading, pastedCode]);
-
-  const handleKeyPress = useCallback((e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  }, [handleSendMessage]);
+  }, [currentChatId, isLoading]);
 
   const handleNewChat = useCallback(async () => {
     try {
@@ -185,35 +239,10 @@ function App() {
     }
   }, []);
 
-  const isCodeLine = (line) => {
-    const codeKeywords = ['function', 'var', 'let', 'const', 'if', 'else', 'return', 'class'];
-    const codeSymbols = ['{', '}', '(', ')', ';', '=', '=>'];
-    if (/^\s{2,}/.test(line)) return true;
-    if (codeKeywords.some(keyword => line.includes(keyword))) return true;
-    if (codeSymbols.some(symbol => line.includes(symbol))) return true;
-    return false;
-  };
-
-  const handlePaste = (e) => {
-    const clipboardData = e.clipboardData || window.clipboardData;
-    const pastedData = clipboardData.getData('Text');
-    const lines = pastedData.split('\n');
-    const codeLines = lines.filter(isCodeLine);
-    if (codeLines.length > 0) {
-      e.preventDefault();
-      const code = codeLines.join('\n');
-      setPastedCode((prev) => prev + '\n' + code);
-      messageInputRef.current += '\n' + code;
+  const handleExamplePrompt = useCallback((prompt) => {
+    if (messageInputRef.current?.setValue) {
+      messageInputRef.current.setValue(prompt);
     }
-  };
-
-  // Auto-resize textarea
-  const handleInputChange = useCallback((e) => {
-    messageInputRef.current = e.target.value;
-    
-    // Auto-resize the textarea
-    e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
   }, []);
 
   const LoadingIndicator = () => (
@@ -226,7 +255,7 @@ function App() {
     </div>
   );
 
-  const MessageList = React.memo(({ messages }) => {
+  const MessageList = React.memo(({ messages, onExamplePrompt, onCopy }) => {
     if (messages.length === 0) {
       return (
         <div className="welcome-screen">
@@ -235,34 +264,19 @@ function App() {
             <div className="example-prompts">
               <button 
                 className="example-prompt"
-                onClick={() => {
-                  messageInputRef.current = "Explain quantum computing in simple terms";
-                  if (inputRef.current) {
-                    inputRef.current.value = messageInputRef.current;
-                  }
-                }}
+                onClick={() => onExamplePrompt("Explain quantum computing in simple terms")}
               >
                 Explain quantum computing
               </button>
               <button 
                 className="example-prompt"
-                onClick={() => {
-                  messageInputRef.current = "Write a Python function to reverse a string";
-                  if (inputRef.current) {
-                    inputRef.current.value = messageInputRef.current;
-                  }
-                }}
+                onClick={() => onExamplePrompt("Write a Python function to reverse a string")}
               >
                 Write a Python function
               </button>
               <button 
                 className="example-prompt"
-                onClick={() => {
-                  messageInputRef.current = "Plan a weekend trip to Paris";
-                  if (inputRef.current) {
-                    inputRef.current.value = messageInputRef.current;
-                  }
-                }}
+                onClick={() => onExamplePrompt("Plan a weekend trip to Paris")}
               >
                 Plan a weekend trip
               </button>
@@ -297,7 +311,7 @@ function App() {
                               <div className="code-block-header">
                                 <span className="code-language">{match[1]}</span>
                                 <button
-                                  onClick={() => handleCopy(codeString)}
+                                  onClick={() => onCopy(codeString)}
                                   className="copy-button"
                                 >
                                   📋 Copy
@@ -330,7 +344,7 @@ function App() {
         </div>
       </div>
     );
-  }, (prevProps, nextProps) => prevProps.messages === nextProps.messages);
+  });
 
   return (
     <div className="app">
@@ -414,7 +428,11 @@ function App() {
       </div>
       <div className="main-content">
         <div className="messages-area">
-          <MessageList messages={messages} />
+          <MessageList 
+            messages={messages} 
+            onExamplePrompt={handleExamplePrompt}
+            onCopy={handleCopy}
+          />
           {isLoading && (
             <div style={{ padding: '0 24px' }}>
               <div style={{ maxWidth: 'none', margin: '0 auto' }}>
@@ -423,33 +441,11 @@ function App() {
             </div>
           )}
         </div>
-        <div className="input-container">
-          <div className="input-form">
-            <div className="input-wrapper">
-              <textarea
-                ref={inputRef}
-                defaultValue={messageInputRef.current}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyPress}
-                onPaste={handlePaste}
-                placeholder="Message ChatGPT..."
-                className="message-input"
-                rows={1}
-                disabled={isLoading}
-              />
-              <button 
-                onClick={handleSendMessage}
-                className={`send-button ${messageInputRef.current.trim() && !isLoading ? 'active' : ''}`}
-                disabled={!messageInputRef.current.trim() || isLoading}
-              >
-                {isLoading ? '⏳' : '↑'}
-              </button>
-            </div>
-          </div>
-          <div className="input-footer">
-            ChatGPT can make mistakes. Consider checking important information.
-          </div>
-        </div>
+        <MessageInput 
+          ref={messageInputRef}
+          onSendMessage={handleSendMessage} 
+          isLoading={isLoading} 
+        />
       </div>
     </div>
   );
